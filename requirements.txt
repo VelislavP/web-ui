@@ -1,0 +1,7 @@
+streamlit
+newspaper4k
+newspaper4k[cloudflare]
+python-whois
+python-dotenv
+requests
+plotly
