@@ -60,15 +60,24 @@ tab_url, tab_text = st.tabs(["URL анализ", "Текстов анализ"])
 # ── HTML / PLOTLY HELPERS ─────────────────────────────────────────────────────
 
 def _gauge_chart(score: int, color: str) -> go.Figure:
+    # Three-slice donut: [colored arc][gray arc][transparent gap]
+    # The 60° gap is anchored at the bottom so the arc always starts at 7 o'clock
+    # and ends at 5 o'clock — the zero point never shifts regardless of score.
+    gap_frac = 60 / 360
+    vis_frac = 1.0 - gap_frac
+    colored  = max((score / 100) * vis_frac, 1e-6)
+    gray     = max(((100 - score) / 100) * vis_frac, 1e-6)
+
     fig = go.Figure(go.Pie(
-        values=[score, max(100 - score, 0)],
+        values=[colored, gray, gap_frac],
         hole=0.72,
-        marker_colors=[color, "rgba(128,128,128,0.15)"],
+        marker_colors=[color, "rgba(128,128,128,0.15)", "rgba(0,0,0,0)"],
+        marker_line=dict(color="rgba(0,0,0,0)", width=0),
         textinfo="none",
         showlegend=False,
         hoverinfo="skip",
         direction="clockwise",
-        rotation=90,
+        rotation=240,  # 240° CCW from east = 7 o'clock start
     ))
     fig.update_layout(
         height=200, width=200,
@@ -341,7 +350,7 @@ def _render_rag_section(rag_result: dict) -> None:
             (s.get("distance") or 0) >= _CHROMA_RELEVANCE_THRESHOLD for s in chroma_sources
         )
         if all_irrelevant and not any(s.get("source") == "Wikipedia BG" for s in sources):
-            st.warning("Не са намерени релевантни локални новини за тази статия.")
+            st.warning("Не са намерени релевантни локални данни за тази статия.")
 
         with st.expander(f"Намерени източници ({len(sources)})"):
             for i, src in enumerate(sources, 1):
