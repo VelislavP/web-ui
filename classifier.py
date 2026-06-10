@@ -1,12 +1,11 @@
 import re
-from pathlib import Path
 
 import numpy as np
 import torch
 from scipy.special import softmax
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-MODEL_DIR = Path(__file__).parent / "model"
+_HF_REPO = "velislavp/ml-bert-new-detect-bg"
 # Best threshold from notebook threshold sweep (maximises F1 on test set)
 FAKE_THRESHOLD = 0.31
 
@@ -20,8 +19,8 @@ def _load():
     if _model is not None:
         return
     _device = "cuda" if torch.cuda.is_available() else "cpu"
-    _tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
-    _model = AutoModelForSequenceClassification.from_pretrained(str(MODEL_DIR))
+    _tokenizer = AutoTokenizer.from_pretrained(_HF_REPO)
+    _model = AutoModelForSequenceClassification.from_pretrained(_HF_REPO)
     _model.to(_device)
     _model.eval()
 
