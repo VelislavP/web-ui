@@ -1,1 +1,1 @@
-model/model.safetensors filter=lfs diff=lfs merge=lfs -text
+# No LFS rules — model is hosted on HuggingFace Hub (velislavp/ml-bert-new-detect-bg)
