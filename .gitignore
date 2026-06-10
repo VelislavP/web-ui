@@ -11,8 +11,8 @@ __pycache__/
 venv/
 env/
 
-# Streamlit cache
-.streamlit/
+# Streamlit — allow config.toml, block secrets
+.streamlit/secrets.toml
 
 # Model (served from HuggingFace Hub — velislavp/ml-bert-new-detect-bg)
 model/

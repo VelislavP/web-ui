@@ -1,0 +1,11 @@
+[server]
+# Use poll watcher — avoids scanning transformers submodules on startup
+fileWatcherType = "poll"
+
+[logger]
+# Suppress noisy warnings from the file watcher trying to inspect
+# transformers submodules that require torchvision (not installed)
+level = "error"
+
+[browser]
+gatherUsageStats = false
