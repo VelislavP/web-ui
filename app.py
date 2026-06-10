@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from classifier import classify
 from domain_checker import check_domain
 from explainer import explain
+from rag import rag_explain
 from scraper import scrape_article
 from trust_score import calculate_domain_score, calculate_trust_score
 
@@ -308,6 +309,35 @@ def _render_domain_section(domain_info: dict) -> None:
     st.markdown('<div style="margin-bottom:32px;"></div>', unsafe_allow_html=True)
 
 
+def _render_rag_section(rag_result: dict) -> None:
+    st.markdown(_sect_hdr("manage_search", "RAG + Gemini Обяснение"), unsafe_allow_html=True)
+
+    status      = rag_result.get("status", "")
+    explanation = rag_result.get("rag_explanation")
+    sources     = rag_result.get("rag_sources", [])
+
+    if status and status != "ok":
+        st.warning(status)
+
+    if explanation:
+        with st.container(border=True):
+            st.markdown(explanation)
+
+    if sources:
+        with st.expander("Намерени релевантни източници"):
+            for i, src in enumerate(sources, 1):
+                is_wiki = src.get("source") == "Wikipedia BG"
+                badge = "🌐 Wikipedia BG" if is_wiki else "📰 Новини (bgGLUE)"
+                st.markdown(f"**{i}. {src['title']}** &nbsp; `{badge}`", unsafe_allow_html=True)
+                if src.get("distance") is not None:
+                    st.caption(f"Разстояние: {src['distance']:.3f} · {src['url']}")
+                else:
+                    st.caption(src['url'])
+                st.markdown(f"> {src['text'][:400]}…")
+                if i < len(sources):
+                    st.divider()
+
+
 def _render_results(
     ml_result:      dict,
     explain_result: dict,
@@ -315,6 +345,7 @@ def _render_results(
     domain_info:    dict | None,
     article:        dict | None = None,
     url:            str  | None = None,
+    rag_result:     dict | None = None,
 ) -> None:
     # Expandable article header — clicking reveals the full text
     if article and url:
@@ -331,13 +362,16 @@ def _render_results(
         st.markdown(_sect_hdr("lightbulb", "AI Обяснение"), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(explain_result["explanation"])
-            st.caption("Stub · ще бъде заменен с Gemini API + LIME контекст")
 
     # LIME chips
     features = explain_result.get("top_features", [])
     if features:
         st.markdown(_sect_hdr("insights", "Ключови индикатори (LIME)"), unsafe_allow_html=True)
         st.markdown(_lime_chips(features), unsafe_allow_html=True)
+
+    # RAG + Gemini section (separate from LIME explanation)
+    if rag_result:
+        _render_rag_section(rag_result)
 
     st.markdown(_sect_hdr("query_stats", "Оценка"), unsafe_allow_html=True)
     col_gauge, col_signals = st.columns([1, 2])
@@ -353,6 +387,34 @@ def _render_results(
     if domain_info:
         st.markdown(_sect_hdr("language", "Домейн"), unsafe_allow_html=True)
         _render_domain_section(domain_info)
+
+    # Raw model output
+    with st.expander("Суров изход на модела"):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("**Вероятности (softmax)**")
+            st.code(
+                f"P(достоверна) = {ml_result['p_real']:.6f}  ({ml_result['p_real']:.2%})\n"
+                f"P(фалшива)    = {ml_result['p_fake']:.6f}  ({ml_result['p_fake']:.2%})"
+            )
+            st.markdown("**Логити (преди softmax)**")
+            st.code(
+                f"logit[0] (достоверна) = {ml_result['logit_real']:+.6f}\n"
+                f"logit[1] (фалшива)    = {ml_result['logit_fake']:+.6f}"
+            )
+        with col_b:
+            st.markdown("**Решение**")
+            verdict_sign = ">=" if ml_result['p_fake'] >= ml_result['threshold'] else "<"
+            st.code(
+                f"threshold = {ml_result['threshold']}\n"
+                f"p_fake ({ml_result['p_fake']:.4f}) {verdict_sign} threshold → {ml_result['label']}"
+            )
+            st.markdown("**LIME индикатори**")
+            features = explain_result.get("top_features", [])
+            if features:
+                st.code("\n".join(f"{w:>20}  {v:+.4f}" for w, v in features))
+            else:
+                st.caption("Не са налични")
 
 
 def _render_domain_only(domain_info: dict, ds: dict) -> None:
@@ -431,14 +493,17 @@ with tab_url:
                 with st.spinner("Анализиране..."):
                     ml_result = explain_result = trust = None
 
+                    # Concatenate title + body to match training format (notebook prepare_text)
+                    full_text = (article.get("title") or "") + " " + article["text"]
+
                     try:
-                        ml_result = classify(article["text"])
+                        ml_result = classify(full_text)
                     except Exception as exc:
                         st.error(f"Грешка при класификация: {exc}")
 
                     if ml_result:
                         try:
-                            explain_result = explain(article["text"], ml_result["label"], ml_result["confidence"])
+                            explain_result = explain(full_text, ml_result["label"], ml_result["confidence"])
                         except Exception as exc:
                             st.warning(f"Не успях да генерирам обяснение: {exc}")
                             explain_result = {"top_features": [], "explanation": "", "lime_html": None}
@@ -448,8 +513,15 @@ with tab_url:
                         except Exception as exc:
                             st.error(f"Грешка при изчисляване на оценката: {exc}")
 
+                        rag_result = None
+                        with st.spinner("RAG анализ..."):
+                            try:
+                                rag_result = rag_explain(full_text, ml_result["label"], ml_result["p_fake"])
+                            except Exception as exc:
+                                st.warning(f"Не успях да генерирам RAG обяснение: {exc}")
+
                         if trust and explain_result:
-                            _render_results(ml_result, explain_result, trust, domain_info, article, url)
+                            _render_results(ml_result, explain_result, trust, domain_info, article, url, rag_result)
 
 
 # ── TEXT TAB ──────────────────────────────────────────────────────────────────
@@ -480,5 +552,12 @@ with tab_text:
                 except Exception as exc:
                     st.error(f"Грешка при изчисляване на оценката: {exc}")
 
+                rag_result = None
+                with st.spinner("RAG анализ..."):
+                    try:
+                        rag_result = rag_explain(text, ml_result["label"], ml_result["p_fake"])
+                    except Exception as exc:
+                        st.warning(f"Не успях да генерирам RAG обяснение: {exc}")
+
                 if trust and explain_result:
-                    _render_results(ml_result, explain_result, trust, None)
+                    _render_results(ml_result, explain_result, trust, None, rag_result=rag_result)

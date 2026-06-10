@@ -1,45 +1,44 @@
-import random
+from lime.lime_text import LimeTextExplainer
 
-# STUB — replace function body with LIME/SHAP + Gemini API when ready.
-#
-# Real implementation will:
-#   1. Run LIME (or SHAP) on the classifier to get actual token/word importances
-#   2. Build the LIME HTML visualization and store in lime_html
-#   3. Query ChromaDB for relevant RAG context (optional)
-#   4. Send features + label + confidence to Gemini API for a Bulgarian explanation
-#   5. Return the same dict structure below
+from classifier import clean_text, predict_proba
 
-_FAKE_EXPLANATION = (
-    "Статията показва признаци на невярна информация. "
-    "Използвани са емоционално натоварени изрази като \"{w1}\" и \"{w2}\", "
-    "характерни за сензационно съдържание. "
-    "Липсват конкретни източници и цитати."
-)
-
-_REAL_EXPLANATION = (
-    "Статията показва признаци на достоверно съдържание. "
-    "Тонът е неутрален, използвани са конкретни факти "
-    "и заглавието съответства на съдържанието."
-)
+_explainer = LimeTextExplainer(class_names=["credible", "fake"])
 
 
 def explain(text: str, label: str, confidence: float) -> dict:
-    """Return top word features with weights and a Bulgarian explanation string."""
-    words = [w for w in text.split() if len(w) > 4]
-    sample = random.sample(words, min(8, len(words))) if words else ["дума"] * 8
+    """Run LIME and return top word features with weights plus a Bulgarian summary."""
+    cleaned = clean_text(text)
 
-    features = [(w, round(random.uniform(-0.2, 0.2), 4)) for w in sample]
-    features.sort(key=lambda x: abs(x[1]), reverse=True)
+    exp = _explainer.explain_instance(
+        cleaned,
+        predict_proba,
+        num_features=10,
+        labels=[1],
+        num_samples=100,
+    )
 
-    if label == "Fake" and len(features) >= 2:
-        explanation = _FAKE_EXPLANATION.format(w1=features[0][0], w2=features[1][0])
-    elif label == "Fake":
-        explanation = _FAKE_EXPLANATION.format(w1="сензация", w2="шок")
-    else:
-        explanation = _REAL_EXPLANATION
+    features = [(str(w), round(float(v), 4)) for w, v in exp.as_list(label=1)]
 
     return {
         "top_features": features,
-        "explanation": explanation,
+        "explanation": _build_explanation(label, confidence, features),
         "lime_html": None,
     }
+
+
+def _build_explanation(label: str, confidence: float, features: list) -> str:
+    fake_words = [w for w, v in features if v > 0.05]
+    real_words = [w for w, v in features if v < -0.05]
+
+    if label == "Fake":
+        indicators = ", ".join(f'„{w}"' for w in fake_words[:3]) if fake_words else "множество индикатори"
+        return (
+            f"Статията показва признаци на невярна информация с увереност {confidence:.0%}. "
+            f"Ключови думи, насочващи към фалшиво съдържание: {indicators}."
+        )
+    else:
+        indicators = ", ".join(f'„{w}"' for w in real_words[:3]) if real_words else "неутрален тон"
+        return (
+            f"Статията показва признаци на достоверно съдържание с увереност {confidence:.0%}. "
+            f"Индикатори за достоверност: {indicators}."
+        )

@@ -5,3 +5,12 @@ python-whois
 python-dotenv
 requests
 plotly
+torch
+transformers
+scipy
+lime
+chromadb
+sentence-transformers
+google-genai
+wikipedia-api
+datasets<4.0.0
