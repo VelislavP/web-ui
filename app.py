@@ -157,7 +157,7 @@ def _sect_hdr(icon: str, text: str) -> str:
 def _ded_html(deductions: list) -> str:
     return "".join(
         f'<div style="font-size:13px;color:#e74c3c;margin:5px 0;display:flex;align-items:center;gap:6px;">'
-        f'{_mi("warning", 16, "#e74c3c")} {d["reason"]}: <strong>−{d["points"]}%</strong></div>'
+        f'{_mi("warning", 16, "#e74c3c")} {d["reason"]}: <strong>−{d["points"]}т</strong></div>'
         for d in deductions
     )
 
@@ -215,10 +215,7 @@ def _render_signal_section(trust: dict, ml_result: dict | None, domain_info: dic
         age_val  = f"{age_days:,} дни" if age_days else "Без данни"
         age_clr  = "#3d9df5"
     else:
-        cards.append(_signal_card(
-            "security", "rgba(128,128,128,.18)", "Safe Browsing · макс 20т", "Без URL · 0 / 20т", 0, "#888",
-        ))
-        age_val, age_clr = "Без URL", "#888"
+        return st.markdown("".join(cards), unsafe_allow_html=True)
 
     age_pct = trust.get("age_score", 50)
     age_pts = round(age_pct * 0.10)
@@ -327,7 +324,7 @@ def _dist_badge(distance: float) -> str:
 
 
 def _render_rag_section(rag_result: dict) -> None:
-    st.markdown(_sect_hdr("manage_search", "RAG + Gemini Обяснение"), unsafe_allow_html=True)
+    st.markdown(_sect_hdr("manage_search", "AI Обяснение"), unsafe_allow_html=True)
 
     status      = rag_result.get("status", "")
     explanation = rag_result.get("rag_explanation")
@@ -350,7 +347,7 @@ def _render_rag_section(rag_result: dict) -> None:
             (s.get("distance") or 0) >= _CHROMA_RELEVANCE_THRESHOLD for s in chroma_sources
         )
         if all_irrelevant and not any(s.get("source") == "Wikipedia BG" for s in sources):
-            st.warning("Не са намерени релевантни локални данни за тази статия.")
+            st.warning("Не са намерени релевантни данни за тази статия.")
 
         with st.expander(f"Намерени източници ({len(sources)})"):
             for i, src in enumerate(sources, 1):
@@ -386,9 +383,13 @@ def _render_results(
 
     st.divider()
 
-    # AI explanation (shown before score so reasoning leads the verdict)
+    # RAG + Gemini first — leads with real-data context
+    if rag_result:
+        _render_rag_section(rag_result)
+
+    # LIME explanation
     if explain_result.get("explanation"):
-        st.markdown(_sect_hdr("lightbulb", "AI Обяснение"), unsafe_allow_html=True)
+        st.markdown(_sect_hdr("lightbulb", "Обяснение на модела"), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(explain_result["explanation"])
 
@@ -398,16 +399,12 @@ def _render_results(
         st.markdown(_sect_hdr("insights", "Ключови индикатори (LIME)"), unsafe_allow_html=True)
         st.markdown(_lime_chips(features), unsafe_allow_html=True)
 
-    # RAG + Gemini section (separate from LIME explanation)
-    if rag_result:
-        _render_rag_section(rag_result)
-
     st.markdown(_sect_hdr("query_stats", "Оценка"), unsafe_allow_html=True)
     col_gauge, col_signals = st.columns([1, 2])
     with col_gauge:
         _render_gauge(
             trust["trust_score"], trust["verdict"], trust["verdict_color"],
-            caption="" if domain_info else "Без домейн информация",
+            caption="",
         )
     with col_signals:
         _render_signal_section(trust, ml_result, domain_info)
