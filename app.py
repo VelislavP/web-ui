@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 from classifier import classify
 from domain_checker import check_domain
 from explainer import explain
-from rag import rag_explain
+from rag import rag_explain, _CHROMA_RELEVANCE_THRESHOLD
 from scraper import scrape_article
 from trust_score import calculate_domain_score, calculate_trust_score
 
@@ -309,12 +309,21 @@ def _render_domain_section(domain_info: dict) -> None:
     st.markdown('<div style="margin-bottom:32px;"></div>', unsafe_allow_html=True)
 
 
+def _dist_badge(distance: float) -> str:
+    if distance < 4.0:
+        return "🟢 близко"
+    if distance < _CHROMA_RELEVANCE_THRESHOLD:
+        return "🟡 умерено"
+    return "🔴 нерелевантно"
+
+
 def _render_rag_section(rag_result: dict) -> None:
     st.markdown(_sect_hdr("manage_search", "RAG + Gemini Обяснение"), unsafe_allow_html=True)
 
     status      = rag_result.get("status", "")
     explanation = rag_result.get("rag_explanation")
     sources     = rag_result.get("rag_sources", [])
+    wiki_error  = rag_result.get("wiki_error")
 
     if status and status != "ok":
         st.warning(status)
@@ -323,14 +332,25 @@ def _render_rag_section(rag_result: dict) -> None:
         with st.container(border=True):
             st.markdown(explanation)
 
+    if wiki_error:
+        st.caption(f"⚠️ Wikipedia грешка: {wiki_error}")
+
     if sources:
-        with st.expander("Намерени релевантни източници"):
+        chroma_sources = [s for s in sources if s.get("source") != "Wikipedia BG"]
+        all_irrelevant = chroma_sources and all(
+            (s.get("distance") or 0) >= _CHROMA_RELEVANCE_THRESHOLD for s in chroma_sources
+        )
+        if all_irrelevant and not any(s.get("source") == "Wikipedia BG" for s in sources):
+            st.warning("Не са намерени релевантни локални новини за тази статия.")
+
+        with st.expander(f"Намерени източници ({len(sources)})"):
             for i, src in enumerate(sources, 1):
                 is_wiki = src.get("source") == "Wikipedia BG"
                 badge = "🌐 Wikipedia BG" if is_wiki else "📰 Новини (bgGLUE)"
                 st.markdown(f"**{i}. {src['title']}** &nbsp; `{badge}`", unsafe_allow_html=True)
-                if src.get("distance") is not None:
-                    st.caption(f"Разстояние: {src['distance']:.3f} · {src['url']}")
+                dist = src.get("distance")
+                if dist is not None:
+                    st.caption(f"{_dist_badge(dist)} · Разстояние: {dist:.3f} · {src['url']}")
                 else:
                     st.caption(src['url'])
                 st.markdown(f"> {src['text'][:400]}…")
@@ -526,12 +546,15 @@ with tab_url:
 
 # ── TEXT TAB ──────────────────────────────────────────────────────────────────
 with tab_text:
+    title_input  = st.text_input("Заглавие", placeholder="Заглавие на статията (по желание)")
     text_input   = st.text_area("Поставете текст на статия", height=250,
                                 placeholder="Поставете текста на статията тук...")
     analyze_text = st.button("Анализирай", key="btn_text")
 
     if analyze_text and text_input.strip():
-        text = text_input.strip()
+        body  = text_input.strip()
+        title = title_input.strip()
+        text  = f"{title}\n\n{body}" if title else body
         with st.spinner("Анализиране..."):
             ml_result = explain_result = trust = None
 

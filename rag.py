@@ -14,6 +14,7 @@ _DB_PATH = Path(__file__).parent / "rag_bg_news_db"
 _COLLECTION_NAME = "credible_bg_news"
 _EMBED_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 _GEMINI_MODEL = "gemini-3.1-flash-lite"  # 15 RPM · 250K TPM · 500 RPD
+_CHROMA_RELEVANCE_THRESHOLD = 7.0       # L2 distances above this are considered irrelevant
 
 _WIKI_API = "https://bg.wikipedia.org/w/api.php"
 _WIKI_HEADERS = {"User-Agent": "VerifyBG/1.0 (university project)"}
@@ -92,10 +93,9 @@ def retrieve_relevant_facts(article_text: str, n_results: int = 3) -> list:
     return retrieved
 
 
-def search_wikipedia_bg(query: str, n_results: int = 2) -> list:
-    """Search Bulgarian Wikipedia and return article summaries."""
+def search_wikipedia_bg(query: str, n_results: int = 2) -> tuple[list, str | None]:
+    """Search Bulgarian Wikipedia and return (results, error_message)."""
     try:
-        # Step 1: search for matching titles
         search_resp = requests.get(
             _WIKI_API,
             params={
@@ -112,11 +112,10 @@ def search_wikipedia_bg(query: str, n_results: int = 2) -> list:
         search_resp.raise_for_status()
         hits = search_resp.json().get("query", {}).get("search", [])
         if not hits:
-            return []
+            return [], None
 
         titles = [h["title"] for h in hits]
 
-        # Step 2: fetch extracts for those titles
         extract_resp = requests.get(
             _WIKI_API,
             params={
@@ -147,10 +146,10 @@ def search_wikipedia_bg(query: str, n_results: int = 2) -> list:
                 "distance": None,
                 "text":     extract[:1200],
             })
-        return results
+        return results, None
 
-    except Exception:
-        return []
+    except Exception as exc:
+        return [], str(exc)
 
 
 def _build_prompt(
@@ -216,13 +215,16 @@ _BG_STOPWORDS = {
 }
 
 def _extract_wiki_query(text: str, max_words: int = 6) -> str:
-    """Extract the most informative words from the article for use as a Wikipedia search query."""
-    # Use the first 300 chars — usually the title + first sentence
-    snippet = text[:300]
-    # Keep only words ≥4 chars that aren't stopwords
-    words = re.findall(r'\b[а-яА-Яa-zA-Z]{4,}\b', snippet)
+    """Extract the most informative words from the article for use as a Wikipedia search query.
+
+    Proper nouns (capitalized) are preferred so brand/entity names like 'Hero' or 'MotoCorp'
+    come first, giving Wikipedia a more targeted query than generic lowercase keywords.
+    """
+    snippet = text[:400]
+    proper = re.findall(r'\b[А-ЯA-Z][а-яА-Яa-zA-Z]{2,}\b', snippet)
+    others = re.findall(r'\b[а-яa-z]{4,}\b', snippet)
     seen, keywords = set(), []
-    for w in words:
+    for w in proper + others:
         wl = w.lower()
         if wl not in _BG_STOPWORDS and wl not in seen:
             seen.add(wl)
@@ -238,16 +240,16 @@ def rag_explain(
     fake_probability: float,
 ) -> dict:
     """Retrieve facts from ChromaDB + Wikipedia BG, then generate a Gemini explanation."""
-    # ChromaDB local news facts
     news_facts = retrieve_relevant_facts(article_text, n_results=3) if _DB_PATH.exists() else []
+    # Only pass sources that are actually close enough to be relevant to Gemini
+    relevant_news = [f for f in news_facts if f["distance"] < _CHROMA_RELEVANCE_THRESHOLD]
 
-    # Wikipedia BG on-demand: build a short keyword query from the article
     wiki_query = _extract_wiki_query(article_text)
-    wiki_facts = search_wikipedia_bg(wiki_query, n_results=2)
+    wiki_facts, wiki_error = search_wikipedia_bg(wiki_query, n_results=2)
 
-    all_sources = news_facts + wiki_facts
+    all_sources = news_facts + wiki_facts  # full list shown in UI
 
-    prompt = _build_prompt(article_text, model_prediction, fake_probability, news_facts, wiki_facts)
+    prompt = _build_prompt(article_text, model_prediction, fake_probability, relevant_news, wiki_facts)
 
     try:
         client = _get_gemini_client()
@@ -256,6 +258,7 @@ def rag_explain(
             "rag_explanation": response.text,
             "rag_sources":     all_sources,
             "status":          "ok",
+            "wiki_error":      wiki_error,
         }
     except Exception as exc:
         retry_delay = _parse_retry_delay(exc)
@@ -263,4 +266,4 @@ def rag_explain(
             status = f"Gemini rate limit — опитайте след {int(retry_delay)} секунди."
         else:
             status = f"Грешка при Gemini: {exc}"
-        return {"rag_explanation": None, "rag_sources": all_sources, "status": status}
+        return {"rag_explanation": None, "rag_sources": all_sources, "status": status, "wiki_error": wiki_error}
