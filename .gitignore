@@ -17,9 +17,6 @@ env/
 # Model (served from HuggingFace Hub — velislavp/ml-bert-new-detect-bg)
 model/
 
-# Notebooks — contain API keys, keep local only
-*.ipynb
-
 # OS
 .DS_Store
 Thumbs.db
