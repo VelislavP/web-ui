@@ -66,6 +66,11 @@ streamlit run app.py
 
 The app opens at `http://localhost:8501`.
 
+
+## Notebooks
+
+All Jupyter Notebook (`.ipynb`) files for the project are located in the `notebooks/` folder.
+
 ## Project structure
 
 ```
