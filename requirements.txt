@@ -12,5 +12,3 @@ lime
 chromadb
 sentence-transformers
 google-genai
-wikipedia-api
-datasets<4.0.0
